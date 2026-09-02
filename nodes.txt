@@ -1,5 +1,5 @@
 proxies:
-- name: akko-sjc-1-mobile
+- name: Akko
   type: vless
   server: 37.123.194.117
   port: 443
@@ -9,11 +9,11 @@ proxies:
   tls: true
   skip-cert-verify: true
   flow: xtls-rprx-vision
-  servername: www.microsoft.com
+  servername: www.nvidia.com
   client-fingerprint: chrome
   reality-opts:
-    public-key: y4ysOumMvnuh4VEdQw6zIgFlQL2c52Zo6bfyfKNCJiA
-    short-id: 0aa569dd182232a2
+    public-key: z7U_wmOA54GZh5w3c2Yui4wjqkmLAu-wbMXTRgII_DQ
+    short-id: 2d501c64fa4f00ae
 - name: vless-???-??
   type: vless
   server: 154.17.8.218
