@@ -8,7 +8,7 @@ on:
     paths:
       - 'hunter_node_extract.py' 
       - 'scan_results.csv' 
-      - '.github/workflows/fetch_nodes.yml'
+      - '.github/workflows/hunter_node_extract.yml'
  # schedule:
     # 北京时间每天早上 8:30 自动运行（UTC 时间 0:30）
    # - cron: '30 0 * * *'
