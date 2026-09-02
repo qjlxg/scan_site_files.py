@@ -1,0 +1,43 @@
+proxies:
+- name: akko-sjc-2
+  type: vless
+  server: 37.123.194.117
+  port: 443
+  uuid: 5d951762-7365-4678-9783-f48aae29f21f
+  network: tcp
+  udp: true
+  tls: true
+  flow: xtls-rprx-vision
+  servername: www.microsoft.com
+  client-fingerprint: chrome
+  reality-opts:
+    public-key: y4ysOumMvnuh4VEdQw6zIgFlQL2c52Zo6bfyfKNCJiA
+    short-id: 47dc59ca32eadfb5
+- name: vless-???-??
+  type: vless
+  server: 154.17.8.218
+  port: 45095
+  uuid: db529499-dee7-4129-8763-940a27e12879
+  network: tcp
+  udp: true
+  tls: true
+  skip-cert-verify: true
+  flow: xtls-rprx-vision
+  servername: www.icloud.com
+  client-fingerprint: chrome
+  reality-opts:
+    public-key: ICXfbwODJQqpSoF8xTsL2aXLEWI2-OeZclOKGl-k4GA
+- name: TX-Reality-WARP
+  type: vless
+  server: 170.106.84.131
+  port: 8443
+  uuid: 68e11737-c0a6-4f20-980d-e2febcc31100
+  network: tcp
+  tls: true
+  udp: true
+  flow: xtls-rprx-vision
+  servername: addons.mozilla.org
+  client-fingerprint: chrome
+  reality-opts:
+    public-key: kT7gHPngl6qiYAts3MxC1TfS0S6IMQV5640t9_cJSgw
+    short-id: fae5f54ece7e0900
