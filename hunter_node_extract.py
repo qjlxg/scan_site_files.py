@@ -2149,7 +2149,7 @@ def _extract_from_structure(
     seen_obj: set,
 ) -> None:
 
-    if depth > 5:
+    if depth > 2:
         return
 
     if isinstance(obj, dict):
