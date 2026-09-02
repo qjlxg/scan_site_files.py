@@ -28,12 +28,13 @@ def scan_single_url(target_url):
 
         soup = BeautifulSoup(resp.text, 'html.parser')
         
-        # 2. 提取页面中所有的超链接
+        # 2. 提取页面中所有的超链接，并严格拼接待检测的完整 URL
         for a_tag in soup.find_all('a', href=True):
             href = a_tag['href'].strip()
             if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
                 continue
 
+            # 使用 urljoin 确保像 /SOUL.md 或 SOUL.md 能完美拼成 http://20.46.163.222:8000/SOUL.md
             full_url = urljoin(target_url, href)
             if full_url in visited_links:
                 continue
@@ -43,34 +44,30 @@ def scan_single_url(target_url):
             parsed_path = urlparse(full_url)
             file_name = os.path.basename(parsed_path.path)
             
-            # 如果链接没有明确的文件名（如指向目录），尝试抓取其路径名或跳过纯HTML外链
             if not file_name or "." not in file_name:
-                # 针对可能是纯文件链接但无后缀的或目录，可根据需求放宽，这里主要收集带扩展名或目录页
                 file_ext = "DIRECTORY/HTML"
             else:
                 file_ext = file_name.split('.')[-1].upper()
 
-            # 3. 针对常见配置文件或文本文件（如 yaml, yml, txt, conf, json 等），尝试读取前几百KB内容
+            # 3. 针对常见配置文件或文本文件（如 yaml, yml, txt, md, conf 等），尝试读取前几百KB内容
             file_content_snippet = ""
             status = "Discovered Only"
             
-            # 判断是否为值得读取内容的文本/配置类型
-            target_exts = ("YAML", "YML", "TXT", "CONF", "JSON", "INI", "LOG", "CFG")
+            # 扩展了常用文本/配置格式（包含 md、yaml、yml、txt 等）
+            target_exts = ("YAML", "YML", "TXT", "MD", "CONF", "JSON", "INI", "LOG", "CFG")
             if file_ext in target_exts or not file_name:
                 try:
-                    # 使用 stream 和限制读取大小（最大读取约 300KB，避免超大文件卡死）
                     file_resp = requests.get(full_url, headers=headers, timeout=5, stream=True)
                     if file_resp.status_code == 200:
                         content_bytes = b""
-                        max_bytes = 300 * 1024  # 300 KB
+                        max_bytes = 300 * 1024  # 最大读取 300 KB
                         for chunk in file_resp.iter_content(chunk_size=4096):
                             content_bytes += chunk
                             if len(content_bytes) >= max_bytes:
                                 break
                         
-                        # 尝试解码为文本
                         try:
-                            file_content_snippet = content_bytes.decode('utf-8', errors='ignore')[:1000] # 保存前1000字符预览
+                            file_content_snippet = content_bytes.decode('utf-8', errors='ignore')[:1000]
                             status = "Read Success"
                         except Exception:
                             file_content_snippet = "[Binary or Undecodable Content]"
@@ -82,7 +79,7 @@ def scan_single_url(target_url):
                 "BaseSite": target_url,
                 "FileName": file_name if file_name else "Index/Root",
                 "FileExtension": file_ext,
-                "FullURL": full_url,
+                "FullURL": full_url,  # 这里存储的就是完整的绝对路径 URL（例如 http://20.46.163.222:8000/SOUL.md）
                 "Status": status,
                 "ContentSnippet": file_content_snippet.replace('\n', ' ').strip()
             })
@@ -102,7 +99,6 @@ def main():
 
     all_scan_results = []
     
-    # 使用线程池并行加速遍历所有网站
     print(f"开始并行扫描 {len(urls)} 个网站...")
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_url = {executor.submit(scan_single_url, url): url for url in urls}
@@ -114,7 +110,7 @@ def main():
     # 保存结果到 CSV 文件
     csv_columns = ["BaseSite", "FileName", "FileExtension", "FullURL", "Status", "ContentSnippet"]
     
-    with open(CSV_OUTPUT, "w", newline="", encoding="utf-8-sig") as csvfile:  # 使用 utf-8-sig 确保 Excel 打开不乱码
+    with open(CSV_OUTPUT, "w", newline="", encoding="utf-8-sig") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=csv_columns)
         writer.writeheader()
         for data in all_scan_results:
