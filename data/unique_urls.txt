@@ -147,7 +147,6 @@ http://132.226.169.119/clash0.yaml
 http://132.226.169.119/clash3.yaml
 http://132.226.169.119/clash_new.yaml
 http://132.226.169.119/ct.yaml
-
 http://132.226.169.119/dx-1.txt
 http://132.226.169.119/dx-2.txt
 http://132.226.169.119/dx.txt
@@ -161,9 +160,7 @@ http://132.226.169.119/new.yaml
 http://132.226.169.119/now_server.txt
 http://132.226.169.119/openclash.yaml
 http://132.226.169.119/pac.txt
-
 http://132.226.169.119/sf1.txt
-
 http://132.226.169.119/tv.txt
 http://132.226.169.119/tv_dx.txt
 http://132.226.169.119/v2ray.txt
