@@ -1,18 +1,19 @@
 proxies:
-- name: akko-sjc-2
+- name: akko-sjc-1-mobile
   type: vless
   server: 37.123.194.117
   port: 443
-  uuid: 5d951762-7365-4678-9783-f48aae29f21f
+  uuid: ae0e44d7-7d66-4990-bc8c-e9fc95a936e9
   network: tcp
   udp: true
   tls: true
+  skip-cert-verify: true
   flow: xtls-rprx-vision
   servername: www.microsoft.com
   client-fingerprint: chrome
   reality-opts:
     public-key: y4ysOumMvnuh4VEdQw6zIgFlQL2c52Zo6bfyfKNCJiA
-    short-id: 47dc59ca32eadfb5
+    short-id: 0aa569dd182232a2
 - name: vless-???-??
   type: vless
   server: 154.17.8.218
@@ -41,3 +42,98 @@ proxies:
   reality-opts:
     public-key: kT7gHPngl6qiYAts3MxC1TfS0S6IMQV5640t9_cJSgw
     short-id: fae5f54ece7e0900
+- name: VLESS-REALITY-443
+  type: vless
+  server: 47.251.108.158
+  port: 443
+  uuid: 975fc322-6e38-434b-a53c-d39fed49b9a9
+  network: tcp
+  udp: true
+  tls: true
+  servername: www.cloudflare.com
+  flow: xtls-rprx-vision
+  client-fingerprint: chrome
+  reality-opts:
+    public-key: SmgYcFIvvFXW3xh4gvGhIJuQsaZvWkAylcjB6TEddEs
+    short-id: 896f52ba2cfca903
+- name: VMess-TCP-10001
+  type: vmess
+  server: 47.251.108.158
+  port: 10001
+  uuid: e1ab0bd0-1a95-4237-96c7-7821f8ece64f
+  alterId: 0
+  cipher: auto
+  network: tcp
+  udp: true
+- name: Trojan-TLS-10002
+  type: trojan
+  server: 47.251.108.158
+  port: 10002
+  password: 71f27a8206154da824d38d90
+  udp: true
+  sni: www.cloudflare.com
+  skip-cert-verify: true
+- name: Shadowsocks-2022-10003
+  type: ss
+  server: 47.251.108.158
+  port: 10003
+  cipher: 2022-blake3-aes-128-gcm
+  password: Oqt0GlN2NuouAdJxS9EWow==
+  udp: true
+- name: Hysteria-10005
+  type: hysteria
+  server: 47.251.108.158
+  port: 10005
+  auth_str: 569f79e52e69ad80a2ba1e26
+  obfs: 5318cf60cbe0da25f2ff1058
+  protocol: udp
+  up: 100 Mbps
+  down: 100 Mbps
+  sni: www.cloudflare.com
+  skip-cert-verify: true
+- name: Hysteria2-10006
+  type: hysteria2
+  server: 47.251.108.158
+  port: 10006
+  password: 5d427fe9b9b9523a4324c850
+  obfs: salamander
+  obfs-password: 5e3e1b39179fc9ef6f2dc2e6
+  sni: www.cloudflare.com
+  skip-cert-verify: true
+- name: TUIC-10007
+  type: tuic
+  server: 47.251.108.158
+  port: 10007
+  uuid: af3418e7-3cea-4239-a5c4-0a03d22083cf
+  password: 6d0541cc97e44059cc6850c4
+  alpn:
+  - h3
+  sni: www.cloudflare.com
+  skip-cert-verify: true
+  congestion-controller: bbr
+  udp: true
+- name: ShadowTLS-SS-10008
+  type: ss
+  server: 47.251.108.158
+  port: 10008
+  cipher: aes-128-gcm
+  password: gMvrTZqb1U6R3kbPMGScm+Q7S08syMbS
+  plugin: shadow-tls
+  plugin-opts:
+    host: www.cloudflare.com
+    password: 41a653c5445494a2b08a71f9
+    version: 3
+  udp: true
+- name: HTTP-10009
+  type: http
+  server: 47.251.108.158
+  port: 10009
+  username: http
+  password: 0d89ae1388b5a0dfd02df9fa58dc82d7
+- name: SOCKS5-10010
+  type: socks5
+  server: 47.251.108.158
+  port: 10010
+  username: socks
+  password: 1906de9f744a4389ce67afd167cafe6d
+  udp: true
