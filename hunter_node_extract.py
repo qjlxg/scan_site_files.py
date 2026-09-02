@@ -1934,7 +1934,7 @@ def _normalize_singbox_outbound(
         elif item.get("public-key"):
             node["public-key"] = item["public-key"]
         if item.get("private_key"):
-            node["private-key"] = item["private-key"]
+            node["private-key"] = item["private_key"]
         elif item.get("private-key"):
             node["private-key"] = item["private-key"]
 
@@ -2149,7 +2149,7 @@ def _extract_from_structure(
     seen_obj: set,
 ) -> None:
 
-    if depth > 2:
+    if depth > 5:
         return
 
     if isinstance(obj, dict):
@@ -2966,6 +2966,14 @@ async def main():
 
                 if url in exclude_list:
                     continue
+
+                # ==========================================
+                # 新增：限制扩展名为 .yaml 或 .txt（忽略参数）
+                # ==========================================
+                parsed_path = urlparse(url).path.lower()
+                if not (parsed_path.endswith(".yaml") or parsed_path.endswith(".txt")):
+                    continue
+                # ==========================================
 
                 urls.add(url)
 
