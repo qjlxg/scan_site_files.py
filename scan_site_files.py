@@ -120,12 +120,6 @@ def scan_single_url(target_line, txt_file_path):
                         results.append(res)
                         if res["Status"] == "Read Success":
                             print(f"  └── [读取成功] {res['FullURL']}")
-                            # 实时写入 txt 文件（使用线程锁确保多线程并发写入时安全不乱序）
-                            import threading
-                            lock = threading.Lock()
-                            with lock:
-                                with open(txt_file_path, "a", encoding="utf-8") as f_txt:
-                                    f_txt.write(res['FullURL'] + "\n")
 
         except Exception as e:
             print(f"[Error] 解析页面 {base_url} 失败: {e}")
@@ -161,6 +155,12 @@ def main():
         writer.writeheader()
         for data in all_scan_results:
             writer.writerow(data)
+
+    # 扫描全部完成后统一批量写入成功读取的 URL，彻底避免多线程频繁 I/O 与锁冲突
+    with open(TXT_OUTPUT, "w", encoding="utf-8") as f_txt:
+        for data in all_scan_results:
+            if data["Status"] == "Read Success":
+                f_txt.write(data["FullURL"] + "\n")
 
     print(f"扫描完成！共发现并记录文件链接: {len(all_scan_results)} 个")
     print(f"  - CSV 完整报告已保存至: {CSV_OUTPUT}")
