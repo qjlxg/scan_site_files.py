@@ -40,6 +40,7 @@ OUTPUT_FILE = ARCHIVE_DIR / f"unique_{TIME_TAG}.yaml"
 # 其他统计与 URL 文件保持在 data/ 目录下不变
 CSV_FILE = DATA_DIR / "unique_stats.csv"
 UNIQUE_URLS_FILE = DATA_DIR / "unique_urls.txt"
+SOURCE_HISTORY_FILE = DATA_DIR / "source_history.json"  # 新增：记录来源历史更新情况
 
 RULES_FILE = CONFIG_DIR / "rules.yaml"
 EXCLUDE_FILE = CONFIG_DIR / "exclude.txt"
@@ -150,6 +151,28 @@ def load_exclude_list() -> set:
         logger.warning(f"读取排除列表失败: {e}")
 
     return exclude_set
+
+
+# ==========================================================
+# 来源历史与更新频率管理
+# ==========================================================
+
+def load_source_history() -> dict:
+    if not SOURCE_HISTORY_FILE.exists():
+        return {}
+    try:
+        with open(SOURCE_HISTORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_source_history(history: dict) -> None:
+    try:
+        with open(SOURCE_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning(f"保存来源历史记录失败: {e}")
 
 
 # ==========================================================
@@ -1649,7 +1672,9 @@ def _normalize_singbox_outbound(
 
         node["network"] = "tcp"
 
-        tls = item.get("tls")
+        tls = item.get(
+            "tls"
+        )
 
         if isinstance(
             tls,
@@ -3088,7 +3113,12 @@ async def main():
                 f"{len(unique_urls)}"
             )
 
+    # 加载历史记录并统计更新频率、节点数
+    source_history = load_source_history()
+    current_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
     stats = []
+    csv_rows = []
     all_nodes_map = {}
 
     total_extracted = 0
@@ -3105,10 +3135,70 @@ async def main():
             continue
 
         stat, nodes = result
-
         stats.append(
             stat
         )
+
+        source = stat[0]
+        node_count = stat[3]
+        summary_text = stat[6]
+
+        # 计算当前内容的 Hash 用于对比更新情况
+        current_content_hash = ""
+        if nodes:
+            try:
+                current_content_hash = hashlib.md5(
+                    json.dumps(nodes, sort_keys=True, ensure_ascii=False).encode(
+                        "utf-8",
+                        errors="ignore"
+                    )
+                ).hexdigest()
+            except Exception:
+                current_content_hash = ""
+        elif summary_text:
+            current_content_hash = hashlib.md5(
+                summary_text.encode("utf-8", errors="ignore")
+            ).hexdigest()
+
+        hist = source_history.get(source, {
+            "total_checks": 0,
+            "total_updates": 0,
+            "last_hash": "",
+            "last_node_count": 0,
+            "last_check_time": "",
+            "last_update_time": ""
+        })
+
+        hist["total_checks"] += 1
+        hist["last_check_time"] = current_time_str
+
+        is_updated = "否"
+        if current_content_hash and current_content_hash != hist.get("last_hash"):
+            is_updated = "是"
+            hist["total_updates"] += 1
+            hist["last_hash"] = current_content_hash
+            hist["last_update_time"] = current_time_str
+
+        hist["last_node_count"] = node_count
+        source_history[source] = hist
+
+        update_freq = f"{hist['total_updates']}/{hist['total_checks']}"
+
+        # 扩展 CSV 行数据：增加 是否有更新、历史检查、历史更新、更新频率、上次更新时间
+        csv_rows.append([
+            stat[0],
+            stat[1],
+            stat[2],
+            stat[3],
+            stat[4],
+            stat[5],
+            is_updated,
+            hist["total_checks"],
+            hist["total_updates"],
+            update_freq,
+            hist["last_update_time"],
+            stat[6],
+        ])
 
         for node in nodes:
 
@@ -3126,6 +3216,9 @@ async def main():
 
             except Exception:
                 continue
+
+    # 保存更新后的历史记录
+    save_source_history(source_history)
 
     unique_nodes = list(
         all_nodes_map.values()
@@ -3181,11 +3274,16 @@ async def main():
                 "节点数",
                 "HTTP码",
                 "响应秒数",
+                "是否有更新",
+                "历史检查",
+                "历史更新",
+                "更新频率",
+                "上次更新时间",
                 "摘要",
             ])
 
             writer.writerows(
-                stats
+                csv_rows
             )
 
     except Exception as e:
