@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 import yaml
 from urllib.parse import urljoin, urlparse
 
-URL_FILE = "url.txt"
+URL_FILE = "success_urls.txt"
 OUTPUT_FILE = "nodes.txt"
 
 headers = {
