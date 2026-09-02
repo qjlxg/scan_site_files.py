@@ -45,6 +45,6 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
           # 提交 data 目录下的常规统计/URL文件，同时提交 archive 目录下新生成的带时间戳 yaml 文件
-          git add data/unique_stats.csv data/unique_urls.txt archive/
+          git add data/unique_stats.csv data/unique_urls.txt data/source_history.json  archive/
           
           git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update nodes and statistics [skip ci]" && git push)
