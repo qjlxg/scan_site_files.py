@@ -466,13 +466,29 @@ def main():
 
         writer = csv.DictWriter(
             csvfile,
-            fieldnames=csv_columns
+            fieldnames=csv_columns,
+            quoting=csv.QUOTE_MINIMAL,
+            quotechar='"',
+            escapechar='\\'
         )
 
         writer.writeheader()
 
         for data in all_scan_results:
-            writer.writerow(data)
+            # 防止网页内容中的特殊控制字符破坏 CSV
+            safe_data = {}
+            for key in csv_columns:
+                value = data.get(key, "")
+                if value is None:
+                    value = ""
+                else:
+                    value = str(value)
+
+                # 清理可能导致 CSV/终端异常的控制字符
+                value = value.replace("\x00", "")
+                safe_data[key] = value
+
+            writer.writerow(safe_data)
 
     # 成功 URL 统一写入
     with open(TXT_OUTPUT, "w", encoding="utf-8") as f_txt:
