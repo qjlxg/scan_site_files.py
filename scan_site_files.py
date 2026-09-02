@@ -9,22 +9,19 @@ URL_FILE = "url.txt"
 CSV_OUTPUT = "site_files_scan.csv"
 
 headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"
 }
 
 def fetch_page_with_fallback(raw_url):
-    """先试 http://，不行再试 https://，最后放弃"""
     raw_url = raw_url.strip()
     if not raw_url:
         return None, None
 
-    # 如果用户自带了协议，先按原样或拆分处理
     if raw_url.lower().startswith("http://"):
         candidates = [raw_url, "https://" + raw_url[7:]]
     elif raw_url.lower().startswith("https://"):
         candidates = [raw_url, "http://" + raw_url[8:]]
     else:
-        # 纯 IP 或域名格式：先试 http，再试 https
         candidates = [f"http://{raw_url}", f"https://{raw_url}"]
 
     for url in candidates:
@@ -42,11 +39,13 @@ def scan_single_url(target_line):
     if not target_line or target_line.startswith("#"):
         return []
 
-    # 使用多协议尝试连接主页
+    print(f"[开始] 正在连接目标: {target_line}")
     base_url, resp = fetch_page_with_fallback(target_line)
     if not base_url or not resp:
+        print(f"[跳过] 无法连接到目标: {target_line}")
         return []
 
+    print(f"[成功] 成功连接主页: {base_url}")
     results = []
     visited_links = set()
 
@@ -89,6 +88,7 @@ def scan_single_url(target_line):
                         try:
                             file_content_snippet = content_bytes.decode('utf-8', errors='ignore')[:1000]
                             status = "Read Success"
+                            print(f"  └── [读取文件成功] {full_url}")
                         except Exception:
                             file_content_snippet = "[Binary or Undecodable Content]"
                             status = "Binary Content"
@@ -119,7 +119,7 @@ def main():
 
     all_scan_results = []
     
-    print(f"开始并行扫描 {len(urls)} 个网站（支持 HTTP/HTTPS 自动降级重试）...")
+    print(f"开始并行扫描 {len(urls)} 个网站...")
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_url = {executor.submit(scan_single_url, url): url for url in urls}
         for future in concurrent.futures.as_completed(future_to_url):
