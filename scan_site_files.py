@@ -1,72 +1,62 @@
 import os
 import csv
-import time
-import threading
 import concurrent.futures
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
+# ============================================================
+# 配置
+# ============================================================
+
 URL_FILE = "url.txt"
 CSV_OUTPUT = "site_files_scan.csv"
 TXT_OUTPUT = "success_urls.txt"
 
-# 保持旧版 UA，便于和旧版做严格对比
+# 保持原来的 UA
 headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36"
 }
 
-# ==========================
-# 诊断参数
-# ==========================
-HEARTBEAT_INTERVAL = 15          # GitHub Actions 每 15 秒输出一次心跳
-SITE_PROGRESS_INTERVAL = 10      # 单站点每完成多少个链接输出一次进度
-PRINT_SITE_START = True
-PRINT_SITE_DONE = True
-
-# 全局诊断状态
-stats_lock = threading.Lock()
-stats = {
-    "sites_total": 0,
-    "sites_started": 0,
-    "sites_finished": 0,
-    "sites_failed": 0,
-    "links_discovered": 0,
-    "links_submitted": 0,
-    "links_finished": 0,
-    "read_success": 0,
-    "read_failed": 0,
-    "discovered_only": 0,
-    "binary": 0,
+# 原脚本真正会读取内容的目标扩展名
+TARGET_EXTS = {
+    "YAML", "YML", "TXT", "MD", "CONF",
+    "JSON", "INI", "LOG", "CFG"
 }
 
-active_sites = {}
-stop_heartbeat = threading.Event()
+# ============================================================
+# 大目录页保护
+#
+# 目的不是改变正常网站的文件识别，而是防止：
+#   1. 软件包镜像
+#   2. distfiles/package 索引
+#   3. 巨型目录列表
+#   4. 自动生成的海量文件索引
+#
+# 把数万条链接全部提交给线程池。
+#
+# 正常网站一般几十/几百个链接，不会触发这里。
+# ============================================================
 
+# 发现超过这个数量后才进行“大目录页”结构判断
+LARGE_PAGE_LINKS = 1200
 
-def heartbeat():
-    """低频心跳，避免 GitHub 日志长时间没有输出而误判卡死。"""
-    while not stop_heartbeat.wait(HEARTBEAT_INTERVAL):
-        with stats_lock:
-            s = stats.copy()
-            active = list(active_sites.values())
+# 极端目录页直接进入保护模式
+HUGE_PAGE_LINKS = 10000
 
-        active_text = ""
-        if active:
-            # 最多显示前 5 个正在处理的网站，避免日志爆炸
-            active_text = " | 活跃: " + " ; ".join(active[:5])
-            if len(active) > 5:
-                active_text += f" ...(+{len(active) - 5})"
+# 大目录页最多保留的“有价值候选”
+LARGE_PAGE_MAX_CANDIDATES = 600
 
-        print(
-            f"[心跳] 网站 {s['sites_finished']}/{s['sites_total']} | "
-            f"发现链接 {s['links_discovered']} | "
-            f"已完成检查 {s['links_finished']}/{s['links_submitted']} | "
-            f"成功读取 {s['read_success']} | "
-            f"失败 {s['read_failed']}"
-            f"{active_text}",
-            flush=True
-        )
+# 每批最多提交给线程池的任务数量，避免一次创建数万个 Future
+CHECK_BATCH_SIZE = 100
+
+# 页面内部同时检查的链接数
+INNER_WORKERS = 5
+
+# 外部同时扫描的网站数
+OUTER_WORKERS = 5
 
 
 def fetch_page_with_fallback(session, raw_url):
@@ -95,41 +85,36 @@ def fetch_page_with_fallback(session, raw_url):
 def check_single_link(session, base_url, full_url, file_name, file_ext):
     file_content_snippet = ""
     status = "Discovered Only"
-    target_exts = ("YAML", "YML", "TXT", "MD", "CONF", "JSON", "INI", "LOG", "CFG")
 
-    try:
-        if file_ext in target_exts or not file_name:
-            try:
-                file_resp = session.get(
-                    full_url,
-                    headers=headers,
-                    timeout=4,
-                    stream=True
-                )
+    if file_ext in TARGET_EXTS or not file_name:
+        try:
+            file_resp = session.get(
+                full_url,
+                headers=headers,
+                timeout=4,
+                stream=True
+            )
 
-                if file_resp.status_code == 200:
-                    content_bytes = b""
-                    max_bytes = 100 * 1024
+            if file_resp.status_code == 200:
+                content_bytes = b""
+                max_bytes = 100 * 1024
 
-                    for chunk in file_resp.iter_content(chunk_size=4096):
-                        content_bytes += chunk
-                        if len(content_bytes) >= max_bytes:
-                            break
+                for chunk in file_resp.iter_content(chunk_size=4096):
+                    content_bytes += chunk
+                    if len(content_bytes) >= max_bytes:
+                        break
 
-                    try:
-                        file_content_snippet = content_bytes.decode(
-                            "utf-8", errors="ignore"
-                        )[:500]
-                        status = "Read Success"
-                    except Exception:
-                        file_content_snippet = "[Binary or Undecodable Content]"
-                        status = "Binary Content"
+                try:
+                    file_content_snippet = content_bytes.decode(
+                        "utf-8", errors="ignore"
+                    )[:500]
+                    status = "Read Success"
+                except Exception:
+                    file_content_snippet = "[Binary or Undecodable Content]"
+                    status = "Binary Content"
 
-            except Exception as e:
-                status = f"Read Failed: {str(e)[:30]}"
-
-    except Exception as e:
-        status = f"Read Failed: {str(e)[:30]}"
+        except Exception as e:
+            status = f"Read Failed: {str(e)[:30]}"
 
     return {
         "BaseSite": base_url,
@@ -141,104 +126,229 @@ def check_single_link(session, base_url, full_url, file_name, file_ext):
     }
 
 
+def classify_links(links):
+    """
+    对已经发现的链接进行轻量结构判断。
+
+    返回：
+        normal_links       正常页面：保持原扫描能力
+        protected_links    大目录页：只保留高价值候选
+        skipped_count      被大目录保护主动跳过的链接数
+
+    这里不做评分，也不改变普通网站的识别规则。
+    """
+
+    total = len(links)
+
+    if total < LARGE_PAGE_LINKS:
+        return links, [], 0, False
+
+    # 统计目标扩展名数量
+    target_links = []
+    directory_links = []
+    other_links = []
+
+    for item in links:
+        _, _, file_name, file_ext = item
+
+        if file_ext in TARGET_EXTS:
+            target_links.append(item)
+        elif not file_name:
+            directory_links.append(item)
+        else:
+            other_links.append(item)
+
+    # 判断是否具有典型“海量目录/镜像”结构
+    #
+    # 关键原则：
+    # - 有大量目标配置文件时，绝不因为目录大而直接跳过
+    # - 目标扩展名本身就是我们真正要找的内容
+    # - 只有在“链接极多 + 绝大多数不是目标文件”的情况下
+    #   才进入保护
+    non_target = total - len(target_links)
+
+    target_ratio = len(target_links) / max(total, 1)
+
+    # 典型大型索引页：
+    #   > 1200 链接，且目标文件占比很低
+    is_large_index = (
+        total >= LARGE_PAGE_LINKS
+        and (
+            target_ratio < 0.20
+            or total >= HUGE_PAGE_LINKS
+        )
+    )
+
+    if not is_large_index:
+        return links, [], 0, False
+
+    # 大目录页：
+    # 1. 所有目标扩展名全部保留
+    # 2. 少量目录链接保留，用于保持发现能力
+    # 3. 非目标海量文件不逐个发 HTTP 请求
+    #
+    # 目录链接只保留前面一小部分，避免镜像站不断向下扩散。
+    protected = list(target_links)
+
+    remaining_slots = max(0, LARGE_PAGE_MAX_CANDIDATES - len(protected))
+
+    if remaining_slots:
+        protected.extend(directory_links[:remaining_slots])
+
+    # 不对其他普通文件逐个请求。
+    # 仍然在 CSV 中保留“Discovered Only”记录，
+    # 因此“发现”信息没有消失，只是不再产生海量 HTTP 请求。
+    skipped = other_links + directory_links[len(
+        protected) - len(target_links)
+    :]
+
+    return protected, skipped, len(skipped), True
+
+
+def make_discovered_only_record(base_url, item):
+    _, full_url, file_name, file_ext = item
+
+    return {
+        "BaseSite": base_url,
+        "FileName": file_name if file_name else "Index/Root",
+        "FileExtension": file_ext,
+        "FullURL": full_url,
+        "Status": "Discovered Only",
+        "ContentSnippet": ""
+    }
+
+
 def scan_single_url(target_line, txt_file_path):
     target_line = target_line.strip()
 
     if not target_line or target_line.startswith("#"):
         return []
 
-    thread_name = threading.current_thread().name
+    print(f"[开始] 正在连接目标: {target_line}")
 
-    with stats_lock:
-        stats["sites_started"] += 1
-        active_sites[thread_name] = target_line
+    with requests.Session() as session:
+        base_url, resp = fetch_page_with_fallback(session, target_line)
 
-    if PRINT_SITE_START:
-        print(f"[开始] {target_line}", flush=True)
+        if not base_url or not resp:
+            print(f"[跳过] 无法连接到目标: {target_line}")
+            return []
 
-    site_start = time.monotonic()
+        print(f"[成功] 成功连接主页: {base_url}")
 
-    try:
-        with requests.Session() as session:
-            base_url, resp = fetch_page_with_fallback(session, target_line)
+        results = []
+        visited_links = set()
+        links_to_check = []
 
-            if not base_url or not resp:
-                with stats_lock:
-                    stats["sites_failed"] += 1
-                    active_sites.pop(thread_name, None)
+        try:
+            soup = BeautifulSoup(resp.text, "html.parser")
 
-                print(f"[跳过] 无法连接: {target_line}", flush=True)
-                return []
+            for a_tag in soup.find_all("a", href=True):
+                href = a_tag["href"].strip()
 
-            print(f"[主页成功] {base_url}", flush=True)
+                if not href or href.startswith(
+                    ("#", "javascript:", "mailto:", "tel:")
+                ):
+                    continue
 
-            results = []
-            visited_links = set()
-            links_to_check = []
+                full_url = urljoin(base_url, href)
 
-            try:
-                soup = BeautifulSoup(resp.text, "html.parser")
+                if full_url in visited_links:
+                    continue
 
-                for a_tag in soup.find_all("a", href=True):
-                    href = a_tag["href"].strip()
+                visited_links.add(full_url)
 
-                    if not href or href.startswith(
-                        ("#", "javascript:", "mailto:", "tel:")
-                    ):
-                        continue
+                parsed_path = urlparse(full_url)
+                file_name = os.path.basename(parsed_path.path)
 
-                    full_url = urljoin(base_url, href)
+                if not file_name or "." not in file_name:
+                    file_ext = "DIRECTORY/HTML"
+                else:
+                    file_ext = file_name.split(".")[-1].upper()
 
-                    if full_url in visited_links:
-                        continue
-
-                    visited_links.add(full_url)
-
-                    parsed_path = urlparse(full_url)
-                    file_name = os.path.basename(parsed_path.path)
-
-                    if not file_name or "." not in file_name:
-                        file_ext = "DIRECTORY/HTML"
-                    else:
-                        file_ext = file_name.split(".")[-1].upper()
-
-                    links_to_check.append(
-                        (base_url, full_url, file_name, file_ext)
-                    )
-
-                discovered_count = len(links_to_check)
-
-                with stats_lock:
-                    stats["links_discovered"] += discovered_count
-                    stats["links_submitted"] += discovered_count
-
-                print(
-                    f"[链接发现] {base_url} | 本页 {discovered_count} 个唯一链接",
-                    flush=True
+                links_to_check.append(
+                    (base_url, full_url, file_name, file_ext)
                 )
 
-                if discovered_count == 0:
-                    elapsed = time.monotonic() - site_start
+            total_links = len(links_to_check)
 
-                    with stats_lock:
-                        stats["sites_finished"] += 1
-                        active_sites.pop(thread_name, None)
+            print(
+                f"[链接发现] {base_url} | "
+                f"本页 {total_links} 个唯一链接"
+            )
 
-                    if PRINT_SITE_DONE:
-                        print(
-                            f"[完成] {base_url} | 0 链接 | {elapsed:.1f}s",
-                            flush=True
-                        )
+            # ====================================================
+            # 大目录页自动识别
+            # ====================================================
 
-                    return results
+            links_to_process, skipped_links, skipped_count, protected = (
+                classify_links(links_to_check)
+            )
 
-                completed_local = 0
-                success_local = 0
-                failed_local = 0
+            if protected:
+                target_count = sum(
+                    1 for x in links_to_process
+                    if x[3] in TARGET_EXTS
+                )
 
-                # 保持原版：每个网站内部仍然使用 5 个线程
+                print(
+                    f"[大目录保护] {base_url} | "
+                    f"原始链接 {total_links} | "
+                    f"目标文件 {target_count} | "
+                    f"实际检查 {len(links_to_process)} | "
+                    f"跳过海量低价值链接 {skipped_count}"
+                )
+
+                # 被跳过的链接仍然进入 CSV，保持“发现能力”
+                for item in skipped_links:
+                    results.append(
+                        make_discovered_only_record(base_url, item)
+                    )
+
+            # ====================================================
+            # 重要优化：
+            #
+            # 原版会把所有链接都 submit 给线程池。
+            # 但绝大多数非目标扩展名根本不会发 HTTP 请求。
+            #
+            # 现在：
+            #   - 非目标文件：直接记录 Discovered Only
+            #   - YAML/JSON/TXT/...：才进入 HTTP 检查
+            #
+            # 这不会改变原版最终识别规则，只减少无意义 Future。
+            # ====================================================
+
+            request_candidates = []
+            direct_discovered = []
+
+            for item in links_to_process:
+                _, full_url, file_name, file_ext = item
+
+                if file_ext in TARGET_EXTS or not file_name:
+                    request_candidates.append(item)
+                else:
+                    direct_discovered.append(item)
+
+            for item in direct_discovered:
+                results.append(
+                    make_discovered_only_record(base_url, item)
+                )
+
+            # ====================================================
+            # 分批提交任务
+            #
+            # 防止一个 3~4 万链接页面一次创建 3~4 万 Future。
+            # ====================================================
+
+            total_candidates = len(request_candidates)
+            completed = 0
+
+            for start in range(0, total_candidates, CHECK_BATCH_SIZE):
+                batch = request_candidates[
+                    start:start + CHECK_BATCH_SIZE
+                ]
+
                 with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=5
+                    max_workers=INNER_WORKERS
                 ) as inner_executor:
 
                     futures = [
@@ -250,126 +360,47 @@ def scan_single_url(target_line, txt_file_path):
                             f_name,
                             f_ext
                         )
-                        for b_url, f_url, f_name, f_ext in links_to_check
+                        for b_url, f_url, f_name, f_ext in batch
                     ]
 
                     for future in concurrent.futures.as_completed(futures):
                         try:
                             res = future.result()
                         except Exception as e:
-                            # 防止单个 Future 异常导致整个站点任务异常退出
-                            completed_local += 1
-
-                            with stats_lock:
-                                stats["links_finished"] += 1
-                                stats["read_failed"] += 1
-
-                            failed_local += 1
-
-                            if (
-                                completed_local == 1
-                                or completed_local % SITE_PROGRESS_INTERVAL == 0
-                                or completed_local == discovered_count
-                            ):
-                                print(
-                                    f"[检查异常] {base_url} | "
-                                    f"{completed_local}/{discovered_count} | "
-                                    f"{str(e)[:80]}",
-                                    flush=True
-                                )
+                            print(
+                                f"[检查异常] {base_url}: "
+                                f"{str(e)[:80]}"
+                            )
                             continue
-
-                        completed_local += 1
-
-                        with stats_lock:
-                            stats["links_finished"] += 1
 
                         if res:
                             results.append(res)
 
                             if res["Status"] == "Read Success":
-                                success_local += 1
+                                print(
+                                    f"  └── [读取成功] "
+                                    f"{res['FullURL']}"
+                                )
 
-                                with stats_lock:
-                                    stats["read_success"] += 1
+                        completed += 1
 
-                            elif res["Status"] == "Read Failed":
-                                failed_local += 1
-
-                                with stats_lock:
-                                    stats["read_failed"] += 1
-
-                            elif res["Status"] == "Binary Content":
-                                with stats_lock:
-                                    stats["binary"] += 1
-
-                            else:
-                                with stats_lock:
-                                    stats["discovered_only"] += 1
-
-                        # 降低 GitHub 日志量：
-                        # 不再每成功一个 URL 都打印，只打印固定间隔/完成节点。
-                        if (
-                            completed_local == 1
-                            or completed_local % SITE_PROGRESS_INTERVAL == 0
-                            or completed_local == discovered_count
-                        ):
-                            print(
-                                f"[检查进度] {base_url} | "
-                                f"{completed_local}/{discovered_count} | "
-                                f"读取成功 {success_local} | "
-                                f"失败 {failed_local}",
-                                flush=True
-                            )
-
-                elapsed = time.monotonic() - site_start
-
-                with stats_lock:
-                    stats["sites_finished"] += 1
-                    active_sites.pop(thread_name, None)
-
-                if PRINT_SITE_DONE:
+                # 大页面给出进度，普通页面也不改变结果
+                if total_candidates >= 100:
                     print(
-                        f"[完成] {base_url} | "
-                        f"链接 {discovered_count} | "
-                        f"成功 {success_local} | "
-                        f"失败 {failed_local} | "
-                        f"耗时 {elapsed:.1f}s",
-                        flush=True
+                        f"[检查进度] {base_url} | "
+                        f"{completed}/{total_candidates} | "
+                        f"结果 {len(results)}"
                     )
 
-                return results
+        except Exception as e:
+            print(f"[Error] 解析页面 {base_url} 失败: {e}")
 
-            except Exception as e:
-                with stats_lock:
-                    stats["sites_failed"] += 1
-                    stats["sites_finished"] += 1
-                    active_sites.pop(thread_name, None)
-
-                print(
-                    f"[解析异常] {base_url} | {str(e)[:120]}",
-                    flush=True
-                )
-                return []
-
-    except Exception as e:
-        with stats_lock:
-            stats["sites_failed"] += 1
-            stats["sites_finished"] += 1
-            active_sites.pop(thread_name, None)
-
-        print(
-            f"[目标异常] {target_line} | {str(e)[:120]}",
-            flush=True
-        )
-        return []
+        return results
 
 
 def main():
-    total_start = time.monotonic()
-
     if not os.path.exists(URL_FILE):
-        print(f"未找到 {URL_FILE} 文件", flush=True)
+        print(f"未找到 {URL_FILE} 文件")
         return
 
     with open(URL_FILE, "r", encoding="utf-8") as f:
@@ -379,76 +410,44 @@ def main():
             if line.strip() and not line.startswith("#")
         ]
 
-    with stats_lock:
-        stats["sites_total"] = len(urls)
-
-    # 初始化输出文件
+    # 每次运行重新生成成功 URL 文件
     with open(TXT_OUTPUT, "w", encoding="utf-8"):
         pass
 
     all_scan_results = []
 
+    print(f"开始并行扫描 {len(urls)} 个网站...")
     print(
-        f"[启动] 开始扫描 | 网站数: {len(urls)} | "
-        f"外层线程: 5 | 内层线程: 5 | "
-        f"主页超时: 6s | 文件请求超时: 4s",
-        flush=True
+        f"配置: 外部并发={OUTER_WORKERS}, "
+        f"内部并发={INNER_WORKERS}, "
+        f"批量={CHECK_BATCH_SIZE}, "
+        f"大目录阈值={LARGE_PAGE_LINKS}"
     )
 
-    heartbeat_thread = threading.Thread(
-        target=heartbeat,
-        name="diagnostic-heartbeat",
-        daemon=True
-    )
-    heartbeat_thread.start()
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=OUTER_WORKERS
+    ) as executor:
 
-    try:
-        # 保持原版：外层仍然 5 个线程
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=5
-        ) as executor:
+        future_to_url = {
+            executor.submit(
+                scan_single_url,
+                url,
+                TXT_OUTPUT
+            ): url
+            for url in urls
+        }
 
-            future_to_url = {
-                executor.submit(scan_single_url, url, TXT_OUTPUT): url
-                for url in urls
-            }
+        for future in concurrent.futures.as_completed(future_to_url):
+            url = future_to_url[future]
 
-            for future in concurrent.futures.as_completed(future_to_url):
-                url = future_to_url[future]
+            try:
+                res = future.result()
 
-                try:
-                    res = future.result()
+                if res:
+                    all_scan_results.extend(res)
 
-                    if res:
-                        all_scan_results.extend(res)
-
-                except Exception as e:
-                    print(
-                        f"[外层任务异常] {url} | {str(e)[:120]}",
-                        flush=True
-                    )
-
-    finally:
-        stop_heartbeat.set()
-        heartbeat_thread.join(timeout=2)
-
-    scan_elapsed = time.monotonic() - total_start
-
-    print(
-        f"[扫描阶段结束] 耗时 {scan_elapsed:.1f}s | "
-        f"网站完成 {stats['sites_finished']}/{stats['sites_total']} | "
-        f"结果 {len(all_scan_results)}",
-        flush=True
-    )
-
-    # ==========================
-    # CSV 写入阶段
-    # ==========================
-    csv_start = time.monotonic()
-    print(
-        f"[CSV开始] 准备写入 {len(all_scan_results)} 条记录...",
-        flush=True
-    )
+            except Exception as e:
+                print(f"[目标异常] {url}: {str(e)[:100]}")
 
     csv_columns = [
         "BaseSite",
@@ -465,85 +464,47 @@ def main():
         newline="",
         encoding="utf-8-sig"
     ) as csvfile:
+
         writer = csv.DictWriter(
             csvfile,
             fieldnames=csv_columns
         )
+
         writer.writeheader()
 
-        for index, data in enumerate(all_scan_results, 1):
+        for data in all_scan_results:
             writer.writerow(data)
 
-            if index % 10000 == 0:
-                print(
-                    f"[CSV进度] {index}/{len(all_scan_results)}",
-                    flush=True
-                )
-
-    csv_elapsed = time.monotonic() - csv_start
-
-    print(
-        f"[CSV完成] {len(all_scan_results)} 条 | "
-        f"耗时 {csv_elapsed:.1f}s",
-        flush=True
-    )
-
-    # ==========================
-    # TXT 写入阶段
-    # ==========================
-    txt_start = time.monotonic()
-
-    success_count = 0
-
-    print("[TXT开始] 写入成功读取 URL...", flush=True)
-
+    # 成功 URL 统一写入
     with open(TXT_OUTPUT, "w", encoding="utf-8") as f_txt:
         for data in all_scan_results:
             if data["Status"] == "Read Success":
                 f_txt.write(data["FullURL"] + "\n")
-                success_count += 1
 
-    txt_elapsed = time.monotonic() - txt_start
-    total_elapsed = time.monotonic() - total_start
+    discovered = len(all_scan_results)
+    success = sum(
+        1 for x in all_scan_results
+        if x["Status"] == "Read Success"
+    )
+    failed = sum(
+        1 for x in all_scan_results
+        if x["Status"].startswith("Read Failed")
+    )
+    discovered_only = sum(
+        1 for x in all_scan_results
+        if x["Status"] == "Discovered Only"
+    )
 
-    # ==========================
-    # 最终诊断汇总
-    # ==========================
-    with stats_lock:
-        s = stats.copy()
-
-    print("", flush=True)
-    print("========== 诊断汇总 ==========", flush=True)
-    print(f"网站总数       : {s['sites_total']}", flush=True)
-    print(f"网站已完成     : {s['sites_finished']}", flush=True)
-    print(f"网站连接失败   : {s['sites_failed']}", flush=True)
-    print(f"发现链接总数   : {s['links_discovered']}", flush=True)
-    print(f"检查完成       : {s['links_finished']}/{s['links_submitted']}", flush=True)
-    print(f"读取成功       : {s['read_success']}", flush=True)
-    print(f"读取失败       : {s['read_failed']}", flush=True)
-    print(f"Binary         : {s['binary']}", flush=True)
-    print(f"仅发现         : {s['discovered_only']}", flush=True)
-    print(f"CSV 写入耗时   : {csv_elapsed:.1f}s", flush=True)
-    print(f"TXT 写入耗时   : {txt_elapsed:.1f}s", flush=True)
-    print(f"总耗时         : {total_elapsed:.1f}s", flush=True)
-    print("==============================", flush=True)
-
-    print(
-        f"扫描完成！共发现并记录文件链接: {len(all_scan_results)} 个",
-        flush=True
-    )
-    print(
-        f"  - CSV 完整报告已保存至: {CSV_OUTPUT}",
-        flush=True
-    )
-    print(
-        f"  - 成功读取的 URL: {success_count} 个",
-        flush=True
-    )
-    print(
-        f"  - 成功读取的 URL 已保存至: {TXT_OUTPUT}",
-        flush=True
-    )
+    print("\n" + "=" * 60)
+    print("扫描完成")
+    print("=" * 60)
+    print(f"共发现并记录: {discovered}")
+    print(f"读取成功:     {success}")
+    print(f"读取失败:     {failed}")
+    print(f"仅发现未读取: {discovered_only}")
+    print(f"CSV: {CSV_OUTPUT}")
+    print(f"成功 URL: {TXT_OUTPUT}")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
