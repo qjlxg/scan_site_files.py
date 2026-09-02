@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 URL_FILE = "url.txt"
 CSV_OUTPUT = "site_files_scan.csv"
+TXT_OUTPUT = "success_urls.txt"  # 新增：保存成功读取URL的文本文件
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -44,7 +45,7 @@ def check_single_link(session, base_url, full_url, file_name, file_ext):
             file_resp = session.get(full_url, headers=headers, timeout=4, stream=True)
             if file_resp.status_code == 200:
                 content_bytes = b""
-                max_bytes = 100 * 1024  # 缩减至 100KB 加快读取
+                max_bytes = 100 * 1024  # 100KB
                 for chunk in file_resp.iter_content(chunk_size=4096):
                     content_bytes += chunk
                     if len(content_bytes) >= max_bytes:
@@ -68,7 +69,7 @@ def check_single_link(session, base_url, full_url, file_name, file_ext):
         "ContentSnippet": file_content_snippet.replace('\n', ' ').strip()
     }
 
-def scan_single_url(target_line):
+def scan_single_url(target_line, txt_file_path):
     target_line = target_line.strip()
     if not target_line or target_line.startswith("#"):
         return []
@@ -119,6 +120,12 @@ def scan_single_url(target_line):
                         results.append(res)
                         if res["Status"] == "Read Success":
                             print(f"  └── [读取成功] {res['FullURL']}")
+                            # 实时写入 txt 文件（使用线程锁确保多线程并发写入时安全不乱序）
+                            import threading
+                            lock = threading.Lock()
+                            with lock:
+                                with open(txt_file_path, "a", encoding="utf-8") as f_txt:
+                                    f_txt.write(res['FullURL'] + "\n")
 
         except Exception as e:
             print(f"[Error] 解析页面 {base_url} 失败: {e}")
@@ -133,12 +140,16 @@ def main():
     with open(URL_FILE, "r", encoding="utf-8") as f:
         urls = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
+    # 如果每次运行想清空之前的 txt 记录，可以用 "w" 模式初始化一次
+    with open(TXT_OUTPUT, "w", encoding="utf-8") as f_txt:
+        pass
+
     all_scan_results = []
     print(f"开始并行扫描 {len(urls)} 个网站...")
     
     # 外部控制同时扫描的网站数
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_url = {executor.submit(scan_single_url, url): url for url in urls}
+        future_to_url = {executor.submit(scan_single_url, url, TXT_OUTPUT): url for url in urls}
         for future in concurrent.futures.as_completed(future_to_url):
             res = future.result()
             if res:
@@ -151,7 +162,9 @@ def main():
         for data in all_scan_results:
             writer.writerow(data)
 
-    print(f"扫描完成！共发现并记录文件链接: {len(all_scan_results)} 个，已保存至 {CSV_OUTPUT}")
+    print(f"扫描完成！共发现并记录文件链接: {len(all_scan_results)} 个")
+    print(f"  - CSV 完整报告已保存至: {CSV_OUTPUT}")
+    print(f"  - 成功读取的 URL 已保存至: {TXT_OUTPUT}")
 
 if __name__ == "__main__":
     main()
