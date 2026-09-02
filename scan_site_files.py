@@ -1,7 +1,7 @@
 import os
 import csv
-import concurrent.futures
-import requests
+import asyncio
+import httpx
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 
@@ -12,7 +12,7 @@ headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"
 }
 
-def fetch_page_with_fallback(raw_url):
+async def fetch_page_with_fallback(client, raw_url):
     raw_url = raw_url.strip()
     if not raw_url:
         return None, None
@@ -26,7 +26,7 @@ def fetch_page_with_fallback(raw_url):
 
     for url in candidates:
         try:
-            resp = requests.get(url, headers=headers, timeout=6)
+            resp = await client.get(url, headers=headers, timeout=3, follow_redirects=True)
             if resp.status_code == 200:
                 return url, resp
         except Exception:
@@ -34,13 +34,13 @@ def fetch_page_with_fallback(raw_url):
             
     return None, None
 
-def scan_single_url(target_line):
+async def scan_single_url(client, target_line):
     target_line = target_line.strip()
     if not target_line or target_line.startswith("#"):
         return []
 
     print(f"[开始] 正在连接目标: {target_line}")
-    base_url, resp = fetch_page_with_fallback(target_line)
+    base_url, resp = await fetch_page_with_fallback(client, target_line)
     if not base_url or not resp:
         print(f"[跳过] 无法连接到目标: {target_line}")
         return []
@@ -52,6 +52,7 @@ def scan_single_url(target_line):
     try:
         soup = BeautifulSoup(resp.text, 'html.parser')
         
+        all_links = []
         for a_tag in soup.find_all('a', href=True):
             href = a_tag['href'].strip()
             if not href or href.startswith(("#", "javascript:", "mailto:", "tel:")):
@@ -61,7 +62,13 @@ def scan_single_url(target_line):
             if full_url in visited_links:
                 continue
             visited_links.add(full_url)
+            all_links.append(full_url)
 
+        # 严格限制单站最大抓取链接数[cite: 1]
+        max_links = 50
+        all_links = all_links[:max_links]
+
+        async def process_link(full_url):
             parsed_path = urlparse(full_url)
             file_name = os.path.basename(parsed_path.path)
             
@@ -76,40 +83,45 @@ def scan_single_url(target_line):
             target_exts = ("YAML", "YML", "TXT", "MD", "CONF", "JSON", "INI", "LOG", "CFG")
             if file_ext in target_exts or not file_name:
                 try:
-                    file_resp = requests.get(full_url, headers=headers, timeout=5, stream=True)
-                    if file_resp.status_code == 200:
-                        content_bytes = b""
-                        max_bytes = 300 * 1024
-                        for chunk in file_resp.iter_content(chunk_size=4096):
-                            content_bytes += chunk
-                            if len(content_bytes) >= max_bytes:
-                                break
-                        
-                        try:
-                            file_content_snippet = content_bytes.decode('utf-8', errors='ignore')[:1000]
-                            status = "Read Success"
-                            print(f"  └── [读取文件成功] {full_url}")
-                        except Exception:
-                            file_content_snippet = "[Binary or Undecodable Content]"
-                            status = "Binary Content"
+                    async with client.stream("GET", full_url, headers=headers, timeout=3, follow_redirects=True) as file_resp:
+                        if file_resp.status_code == 200:
+                            content_bytes = b""
+                            max_bytes = 300 * 1024
+                            async for chunk in file_resp.aiter_bytes(chunk_size=4096):
+                                content_bytes += chunk
+                                if len(content_bytes) >= max_bytes:
+                                    break
+                            
+                            try:
+                                file_content_snippet = content_bytes.decode('utf-8', errors='ignore')[:1000]
+                                status = "Read Success"
+                                print(f"  └── [读取文件成功] {full_url}")
+                            except Exception:
+                                file_content_snippet = "[Binary or Undecodable Content]"
+                                status = "Binary Content"
                 except Exception as e:
                     status = f"Read Failed: {str(e)[:30]}"
 
-            results.append({
+            return {
                 "BaseSite": base_url,
                 "FileName": file_name if file_name else "Index/Root",
                 "FileExtension": file_ext,
                 "FullURL": full_url,
                 "Status": status,
                 "ContentSnippet": file_content_snippet.replace('\n', ' ').strip()
-            })
+            }
+
+        tasks = [process_link(link) for link in all_links]
+        if tasks:
+            link_results = await asyncio.gather(*tasks)
+            results.extend(link_results)
 
     except Exception as e:
         print(f"[Error] 解析页面 {base_url} 失败: {e}")
 
     return results
 
-def main():
+async def main_async():
     if not os.path.exists(URL_FILE):
         print(f"未找到 {URL_FILE} 文件")
         return
@@ -120,10 +132,10 @@ def main():
     all_scan_results = []
     
     print(f"开始并行扫描 {len(urls)} 个网站...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        future_to_url = {executor.submit(scan_single_url, url): url for url in urls}
-        for future in concurrent.futures.as_completed(future_to_url):
-            res = future.result()
+    async with httpx.AsyncClient() as client:
+        tasks = [scan_single_url(client, url) for url in urls]
+        site_results = await asyncio.gather(*tasks)
+        for res in site_results:
             if res:
                 all_scan_results.extend(res)
 
@@ -136,6 +148,9 @@ def main():
             writer.writerow(data)
 
     print(f"扫描完成！共发现并记录文件链接: {len(all_scan_results)} 个，已保存至 {CSV_OUTPUT}")
+
+def main():
+    asyncio.run(main_async())
 
 if __name__ == "__main__":
     main()
