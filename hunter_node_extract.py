@@ -32,7 +32,7 @@ ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
 TIME_TAG = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 # 修改此处：将原本的 scan_results.csv 改为读取 success_urls.txt
-INPUT_TXT = DRIVE_ROOT / "success_urls.txt"
+INPUT_TXT = DRIVE_ROOT / "unique_urls.txt"
 
 # unique.yaml 加上时间戳并单独存放到 archive 目录中
 OUTPUT_FILE = ARCHIVE_DIR / f"unique_{TIME_TAG}.yaml"
