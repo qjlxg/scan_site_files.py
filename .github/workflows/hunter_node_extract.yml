@@ -1,4 +1,4 @@
-name: fetch-nodes
+name: hunter_node_extract
 
 on:
   push:
