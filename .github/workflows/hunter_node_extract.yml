@@ -9,7 +9,7 @@ on:
       - 'hunter_node_extract.py' 
       - 'scan_results.csv' 
       - '.github/workflows/hunter_node_extract.yml'
- # schedule:
+  # schedule:
     # 北京时间每天早上 8:30 自动运行（UTC 时间 0:30）
    # - cron: '30 0 * * *'
   workflow_dispatch:
@@ -47,4 +47,9 @@ jobs:
           # 提交 data 目录下的常规统计/URL文件，同时提交 archive 目录下新生成的带时间戳 yaml 文件
           git add data/unique_stats.csv data/unique_urls.txt data/source_history.json  archive/
           
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update nodes and statistics [skip ci]" && git push)
+          # 如果没有改动则跳过
+          git diff --quiet && git diff --staged --quiet || (
+            git commit -m "Auto-update nodes and statistics [skip ci]" && 
+            git pull --rebase origin main --autostash || git pull --rebase origin master --autostash && 
+            git push
+          )
