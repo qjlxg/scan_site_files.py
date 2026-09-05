@@ -19,9 +19,11 @@ def main():
     m3u_lines = ["#EXTM3U"]
     count = 0
 
-    # 使用 errors="ignore" 忽略无法解码的非法字节，防止报错中断
+    # 使用生成器过滤掉行中的 NUL 字符 (\x00)，防止 csv.reader 报错中断
     with open(CSV_INPUT, "r", encoding="utf-8", errors="ignore") as f:
-        reader = csv.reader(f)
+        cleaned_lines = (line.replace("\x00", "") for line in f)
+        reader = csv.reader(cleaned_lines)
+        
         for row in reader:
             # 确保行数据足够（CSV第四列对应索引 3 是 FullURL）
             if len(row) > 3:
