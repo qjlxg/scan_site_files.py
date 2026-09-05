@@ -19,7 +19,8 @@ def main():
     m3u_lines = ["#EXTM3U"]
     count = 0
 
-    with open(CSV_INPUT, "r", encoding="utf-8-sig") as f:
+    # 使用 errors="ignore" 忽略无法解码的非法字节，防止报错中断
+    with open(CSV_INPUT, "r", encoding="utf-8", errors="ignore") as f:
         reader = csv.reader(f)
         for row in reader:
             # 确保行数据足够（CSV第四列对应索引 3 是 FullURL）
