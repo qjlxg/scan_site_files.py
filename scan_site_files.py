@@ -13,16 +13,12 @@ URL_FILE = "url.txt"
 CSV_OUTPUT = "site_files_scan.csv"
 TXT_OUTPUT = "success_urls.txt"
 
-# 保持原来的 UA
-headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                  "AppleWebKit/537.36 (KHTML, like Gecko) "
-                  "Chrome/120.0.0.0 Safari/537.36"
-}
 
-# 原脚本真正会读取内容的目标扩展名
+headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 Edg/151.0.0.0"}
+
+
 TARGET_EXTS = {
-    "YAML", "YML", "TXT"
+    "YAML", "YML", "M3U","TXT"
 }
 
 # ============================================================
@@ -490,11 +486,16 @@ def main():
 
             writer.writerow(safe_data)
 
-    # 成功 URL 统一写入
+    # 成功 URL 统一写入（增加扩展名过滤：仅保留文件名后缀在 TARGET_EXTS 中的项）
     with open(TXT_OUTPUT, "w", encoding="utf-8") as f_txt:
         for data in all_scan_results:
             if data["Status"] == "Read Success":
-                f_txt.write(data["FullURL"] + "\n")
+                parsed_url = urlparse(data["FullURL"])
+                file_name = os.path.basename(parsed_url.path)
+                if "." in file_name:
+                    file_ext = file_name.split(".")[-1].upper()
+                    if file_ext in TARGET_EXTS:
+                        f_txt.write(data["FullURL"] + "\n")
 
     discovered = len(all_scan_results)
     success = sum(
